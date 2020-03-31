@@ -4,11 +4,10 @@ from __future__ import (absolute_import, division, print_function,
                         )  #unicode_literals, with_statement)
 import os, sys, time
 import warnings
-from collections import defaultdict  # since Python 2.5
-from collections import MutableMapping  # since Python 2.4?
 import ast  # ast.literal_eval is safe eval
 import numpy as np
-from .python3for2 import range
+from collections import defaultdict  # since Python 2.5
+from .python3for2 import abc, range
 del absolute_import, division, print_function  #, unicode_literals, with_statement
 
 PY2 = sys.version_info[0] == 2
@@ -443,7 +442,7 @@ class DictClass(dict):
     def __dir__(self):
         return self.keys()
 
-class DerivedDictBase(MutableMapping):
+class DerivedDictBase(abc.MutableMapping):
     """for conveniently adding methods/functionality to a dictionary.
 
     The actual dictionary is in ``self.data``. Derive from this
@@ -455,7 +454,7 @@ class DerivedDictBase(MutableMapping):
 
     """
     def __init__(self, *args, **kwargs):
-        # MutableMapping.__init__(self)
+        # abc.MutableMapping.__init__(self)
         super(DerivedDictBase, self).__init__()
         # super(SolutionDict, self).__init__()  # the same
         self.data = dict()
@@ -502,13 +501,18 @@ class SolutionDict(DerivedDictBase):
         super(SolutionDict, self).__init__(*args, **kwargs)
         self.data_with_same_key = {}
         self.last_iteration = 0
+    @staticmethod
+    def _hash(x):
+        return x
     def key(self, x):
         """compute key of ``x``"""
         try:
-            return tuple(x)
-            # using sum(x) is slower, using x[0] is slightly faster
-        except TypeError:
-            return x
+            return self._hash(np.ascontiguousarray(x).data.tobytes())  # much faster than tuple(.)
+        except AttributeError:
+            try:
+                return self._hash(tuple(x))  # using sum(x) is slower, using x[0] is slightly faster
+            except TypeError:
+                return self._hash(x)
     def __setitem__(self, key, value):
         """define ``self[key] = value``"""
         key = self.key(key)
