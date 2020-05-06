@@ -5,8 +5,8 @@ Evolution Strategy).
 CMA-ES is a stochastic optimizer for robust non-linear non-convex
 derivative- and function-value-free numerical optimization.
 
-This implementation can be used with Python versions >= 2.6, namely,
-it was tested with 2.6, 2.7, 3.3, 3.4, 3.5, 3.6.
+This implementation can be used with Python versions >= 2.7, namely,
+it was tested with 2.7, 3.5, 3.6, 3.7, 3.8.
 
 CMA-ES searches for a minimizer (a solution x in :math:`R^n`) of an
 objective function f (cost function), such that f(x) is minimal.
@@ -120,31 +120,33 @@ __license__ = "BSD 3-clause"
 # __package__ = 'cma'
 from . import purecma
 try:
-    from . import (constraints_handler, evolution_strategy, fitness_functions,
-                   fitness_transformations, interfaces, optimization_tools,
-                   sampler, sigma_adaptation, transformations, utilities,
-                   )
+    import numpy
+    del numpy
 except ImportError:
     print('Only `cma.purecma` has been imported. Install `numpy` ("pip'
           ' install numpy") if you want to import the entire `cma`'
           ' package.')
 else:
+    from . import (constraints_handler, evolution_strategy, fitness_functions,
+                    fitness_transformations, interfaces, optimization_tools,
+                    sampler, sigma_adaptation, transformations, utilities,
+                    )
     # from . import test  # gives a warning with python -m cma.test (since Python 3.5.3?)
     test = 'type "import cma.test" to access the `test` module of `cma`'
     from . import s
     from .fitness_functions import ff
     from .fitness_transformations import GlueArguments, ScaleCoordinates
-    from .evolution_strategy import fmin, fmin2, CMAEvolutionStrategy, CMAOptions
+    from .evolution_strategy import fmin, fmin2, fmin_con, CMAEvolutionStrategy, CMAOptions
     from .logger import disp, plot, CMADataLogger
     from .optimization_tools import NoiseHandler
     from .constraints_handler import BoundPenalty, BoundTransform
+    from .evolution_strategy import cma_default_options_
 
 del division, print_function, absolute_import, with_statement  #, unicode_literals
 
 # fcts = ff  # historical reasons only, replace cma.fcts with cma.ff first
 
-__author__ = 'Nikolaus Hansen'
-__version__ = "2.7.1  $Revision: 4427 $ $Date: 2019-09-18 19:19:24 +0200 (Wed, 18 Sep 2019) $"
+__version__ = "3.0.3  $Revision: 4430 $ $Date: 2020-04-21 01:19:04 +0200 (Tue, 21 Apr 2020) $"
 # $Source$  # according to PEP 8 style guides, but what is it good for?
-# $Id: __init__.py 4427 2019-09-18 17:19:24Z hansen $
+# $Id: __init__.py 4430 2020-04-20 23:19:04Z hansen $
 # bash $: svn propset svn:keywords 'Date Revision Id' __init__.py

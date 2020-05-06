@@ -1,7 +1,11 @@
 """Utility classes and functionalities loosely related to optimization
 """
 from __future__ import absolute_import, division, print_function  #, unicode_literals
+import sys
+import warnings
 import numpy as np
+from multiprocessing import Pool as ProcessingPool
+# from pathos.multiprocessing import ProcessingPool
 from .utilities.utils import BlancClass as _BlancClass
 from .utilities.math import Mh
 # from .transformations import BoundTransform  # only to make it visible but gives circular import anyways
@@ -11,6 +15,9 @@ del absolute_import, division, print_function  #, unicode_literals
 def semilogy_signed(x=None, y=None, yoffset=0, minabsy=None, iabscissa=1,
                     **kwargs):
     """signed semilogy plot.
+
+    ``plt.yscale('symlog', linthreshy=min(abs(data[data != 0])))`` should
+    do the same job as least as good.
 
     `y` (or `x` if `y` is `None`) is a data array, by default read from
     `outcmaesxmean.dat` or (first) from the default logger output file
@@ -94,7 +101,7 @@ def contour_data(fct, x_range, y_range=None):
     """generate x,y,z-data for contour plot.
 
     `fct` is a 2-D function.
-    `x`- and `y_range` are `iterable`s (e.g. `list`s or arrays)
+    `x`- and `y_range` are `iterable` (e.g. `list` or arrays)
     to define the meshgrid.
 
     CAVEAT: this function calls `fct` ``len(list(x_range)) * len(list(y_range))``
@@ -166,6 +173,136 @@ def step_data(data, smooth_corners=0.1):
     # y = np.linspace(0, 1, len(x), endpoint=True)
     return x, y
 
+
+class EvalParallel2(object):
+    """A class and context manager for parallel evaluations.
+
+    This class is based on the ``Pool`` class of the `multiprocessing` module.
+    
+    The interface in v2 changed, such that the fitness function can be
+    given once in the constructor. Hence the number of processes has 
+    become the second (optional) argument of `__init__` and the function
+    has become the second and optional argument of `__call__`.
+
+    To be used with the `with` statement (otherwise `terminate` needs to
+    be called to free resources)::
+
+        with EvalParallel2(fitness_function) as eval_all:
+            fvals = eval_all(solutions)
+
+    assigns a callable `EvalParallel2` class instance to ``eval_all``.
+    The instance can be called with a `list` (or `tuple` or any
+    sequence) of solutions and returns their fitness values. That is::
+
+        eval_all(solutions) == [fitness_function(x) for x in solutions]
+
+    `EvalParallel2.__call__` may take three additional optional arguments,
+    namely `fitness_function` (like this the function may change from call
+    to call), `args` passed to ``fitness`` and `timeout` passed to the
+    `multiprocessing.pool.ApplyResult.get` method which raises
+    `multiprocessing.TimeoutError` in case.
+
+    ``eval_all = EvalParallel2(fitness_function, 0)`` bypasses
+    `multiprocessing`, hence the construct can be used even when
+    `multiprocessing` fails on this `fitness_function` instantiation.
+
+    Examples:
+
+    >>> from cma.optimization_tools import EvalParallel2
+    >>> for n_jobs in [None, -1, 0, 1, 2, 4]:
+    ...     with EvalParallel2(cma.fitness_functions.elli, n_jobs) as eval_all:
+    ...         res = eval_all([[1,2], [3,4]])
+    >>> # class usage, don't forget to call terminate
+    >>> ep = EvalParallel2(cma.fitness_functions.elli, 4)
+    >>> ep([[1,2], [3,4], [4, 5]])  # doctest:+ELLIPSIS
+    [4000000.944...
+    >>> ep.terminate()
+    ...
+    >>> # use with `with` statement (context manager)
+    >>> es = cma.CMAEvolutionStrategy(3 * [1], 1, dict(verbose=-9))
+    >>> with EvalParallel2(cma.fitness_functions.elli,
+    ...                    number_of_processes=12) as eval_all:
+    ...     while not es.stop():
+    ...         X = es.ask()
+    ...         es.tell(X, eval_all(X))  # eval_all also accepts `fitness_function`
+    ...                                  # and `args` as optional arguments
+    >>> assert es.result[1] < 1e-13 and es.result[2] < 1500
+
+    Parameters: the `EvalParallel2` constructor takes the number of
+    processes as optional input argument, which is by default
+    ``multiprocessing.cpu_count()``. If ``number_of_processes <= 0``, no
+    `multiprocessing` is invoked and the fitness is computed directly in a
+    regular loop.
+
+    Limitations: the `multiprocessing` module, on which this class is based
+    upon, may not work with certain class instance methods or Cython
+    instances, or class instances that contain modules as it uses `pickle`.
+
+    Details: in some cases the execution may be considerably slowed down,
+    as for example in previous tests done with test suites from coco/bbob.
+
+    Comparing setting ``number_of_processes = 0`` with
+    ``number_of_processes = 1`` evaluates the overhead introduced by
+    ``multiprocessing.Pool.apply_async``.
+"""
+    def __init__(self, fitness_function=None, number_of_processes=None):
+        self.fitness_function = fitness_function
+        self.processes = number_of_processes  # for the record
+        if self.processes is None or self.processes > 0:
+            self.pool = ProcessingPool(self.processes)
+        else:
+            self.pool = None
+
+    def __call__(self, solutions, fitness_function=None, args=(), timeout=None):
+        """evaluate a list/sequence of solution-"vectors", return a list
+        of corresponding f-values.
+
+        `args` is passed to `fitness_function` like
+        ``fitness_function(solutions[0], *args)``.
+
+        Raises `multiprocessing.TimeoutError` if `timeout` is given and
+        exceeded.
+        """
+        fitness_function = fitness_function or self.fitness_function
+        if fitness_function is None:
+            raise ValueError("`fitness_function` was never given, must be"
+                             " passed in `__init__` or `__call__`")
+        if not self.pool:
+            return [fitness_function(x, *args) for x in solutions]
+        warning_str = ("`fitness_function` must be a function, not a"
+                       " `lambda` or an instancemethod, in order to work with"
+                       " `multiprocessing` under Python 2")
+        if sys.version[0] == '2':
+            if isinstance(fitness_function, type(self.__init__)):
+                warnings.warn(warning_str)
+        jobs = [self.pool.apply_async(fitness_function, (x,) + args)
+                for x in solutions]
+        try:
+            return [job.get(timeout) for job in jobs]
+        except:
+            sys.version[0] == '2' and warnings.warn(warning_str)
+            raise
+
+    def terminate(self):
+        """free allocated processing pool"""
+        if not self.pool:
+            return
+        # self.pool.close()  # would wait for job termination
+        self.pool.terminate()  # terminate jobs regardless
+        self.pool.join()  # end spawning
+
+    def __enter__(self):
+        # we could assign self.pool here, but then `EvalParallel2` would
+        # *only* work when using the `with` statement
+        return self
+
+    def __exit__(self, exc_type, exc_value, traceback):
+        self.terminate()
+
+    def __del__(self):
+        """though generally not recommended `__del__` should be OK here"""
+        self.terminate()
+
 class BestSolution(object):
     """container to keep track of the best solution seen.
 
@@ -229,7 +366,90 @@ class BestSolution(object):
         """return ``(x, f, evals)`` """
         return self.x, self.f, self.evals  # , self.x_geno
 
-class EvolutionPath(object):
+class ExponentialSmoothing(object):
+    """not in use (yet)
+
+    Exponentially smoothened vector, new data are added via
+    calling the class instance. The `normalizer` is applied to
+    the weight ``1 / time_constant`` used for the new data.
+
+    """
+    def __init__(self, time_constant=None, normalizer=lambda x: x):
+        self.time_constant = time_constant
+        if self.time_constant is not None and self.time_constant < 1:
+            raise ValueError("time_constant = %d must be >=1" % self.time_constant)
+        self.normalizer = normalizer
+        self.values = None
+        self.count = 0
+
+    def _init_(self, v):
+        self.values = np.array(v, dtype=float)
+        if self.time_constant is None:
+            self.time_constant = 1 + len(v)**0.5
+
+    def __getitem__(self, i):
+        return self.values[i]
+
+    def __call__(self, v):
+        if self.values is None:
+            self._init_(v)
+        self.count += 1
+        tc = np.min((self.count, self.time_constant))
+        self.values *= 1 - 1 / tc
+        self.values += self.normalizer(1 / tc) * np.asarray(v)
+        return self
+
+class EvolutionPath(ExponentialSmoothing):
+    """not in use (yet)
+
+    A variance-neutral exponentially smoothened vector.
+    """
+    def __init__(self, time_constant=None):
+        super(EvolutionPath, self).__init__(
+            time_constant, lambda x: np.sqrt(x * (2 - x)))
+
+    @property
+    def path(self):
+        return self.values
+
+class BinaryEvolutionPath(EvolutionPath):
+
+    @property
+    def probability_larger_than_one_from_binary(self):
+        """propability of path entries to be larger than one,
+
+        given the input is ``sign(randn())``. Check out::
+
+            n = int(1e4)
+            greater_than_one = []
+            ar_tc = [1.2, 1.5, 1.9, 2, 4, 8, 16, 32, 100]
+            for tc in ar_tc:
+                p = cma.optimization_tools.EvolutionPath(tc)
+                for i in range(int(10 * tc)):
+                    p(np.sign(np.random.randn(n)))
+                # plot(*step_data(p.path))
+                greater_than_one += [(np.mean(p.path > 1) + np.mean(p.path < -1)) / 2]
+
+        """
+        return np.minimum(0.25, 0.15865525393145707  # these come from the math for tc=1 and tc=infty
+                          + 0.2 / np.asarray(self.time_constant)**1.9)  # empirical fit to the data
+
+    @property
+    def raw_binary_s(self):
+        """return one of two possible values with expectation of zero.
+
+        the maximum for the larger value is 1 - 0.15865525393145707 for tc\to\infty.
+        """
+        # p * (I - p) + (1 - p) * (0 - p) = p - p^2  - p + p^2 = 0
+        return (np.abs(self.values) > 1) - self.probability_larger_than_one_from_binary
+
+    def binary_s(self, odds_of_increment=1):
+        """how many increments for one decrement in stationary state"""
+        s = self.raw_binary_s
+        s[s > 0] /= odds_of_increment
+        return s
+
+class OldEvolutionPath(object):
     """not in use (yet)
 
     A variance-neutral exponentially smoothened vector.

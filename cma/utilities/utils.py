@@ -24,6 +24,12 @@ global_verbosity = 1
 # which is also True for array([]) and None, but also for 0 and False,
 # and False for NaN, and an exception for array([0,1]), see also
 # http://google-styleguide.googlecode.com/svn/trunk/pyguide.html#True/False_evaluations
+
+def seval(s, *args, **kwargs):
+    if any(substring in s for substring in ("import", "sys.", "sys ", "shutil", "val(")):
+        raise ValueError('"%s" seems unsafe to evaluate' % s)
+    return eval(s, *args, **kwargs)
+
 def is_(var):
     """intuitive handling of variable truth value also for `numpy` arrays.
 
@@ -44,6 +50,10 @@ def is_(var):
         return True if len(var) else False
     except TypeError:  # cases None, False, 0
         return True if var else False
+def is_one(var):
+    """return True if var == 1 or ones vector"""
+    try: return np.all(np.asarray(var) == 1)
+    except: return var == 1  # should never happen!?
 def is_not(var):
     """see `is_`"""
     return not is_(var)
@@ -284,7 +294,7 @@ def num2str(val, significant_digits=2, force_rounding=False,
 
     # now the second, %e format
     s = ('%.' + str(significant_digits - 1) + 'e') % val
-    if eval(s) == val and s.find('.') > 0:
+    if seval(s) == val and s.find('.') > 0:
         while s.find('0e') > 0:
             s = s.replace('0e', 'e')
     s = s.replace('.e', 'e')
@@ -532,7 +542,7 @@ class SolutionDict(DerivedDictBase):
                 self.data[key] = self.data_with_same_key.pop(key)[0]
             else:
                 self.data[key] = self.data_with_same_key[key].pop(-1)
-        else:
+        elif key in self.data:
             del self.data[key]
     def truncate(self, max_len, min_iter):
         """delete old entries to prevent bloat"""

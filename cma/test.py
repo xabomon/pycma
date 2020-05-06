@@ -43,6 +43,7 @@ files_for_doctest = ['bbobbenchmarks.py',
                      'fitness_models.py',
                      'fitness_transformations.py',
                      'interfaces.py',
+                     'logger.py',
                      'optimization_tools.py',
                      'purecma.py',
                      'recombination_weights.py',
@@ -102,23 +103,33 @@ def various_doctests():
 
     A simple first overall test:
 
-        >>> import cma
-        >>> res = cma.fmin(cma.ff.elli, 3*[1], 1,
-        ...                {'CMA_diagonal':2, 'seed':1, 'verb_time':0})
-        ...                # doctest: +ELLIPSIS
-        (3_w,7)-aCMA-ES (mu_w=2.3,w_1=58%) in dimension 3 (seed=1,...)
-           Covariance matrix is diagonal for 2 iterations (1/ccov=6...
-        Iterat #Fevals   function value  axis ratio  sigma ...
-        >>> assert res[1] < 1e-6
-        >>> assert res[2] < 2000
+    >>> import cma
+    >>> res = cma.fmin(cma.ff.elli, 3*[1], 1,
+    ...                {'CMA_diagonal':2, 'seed':1, 'verbose':-9})
+    >>> assert res[1] < 1e-6
+    >>> assert res[2] < 2000
+
+    Testing `args` argument:
+
+    >>> def maxcorr(m):
+    ...     val = 0
+    ...     for i in range(len(m)):
+    ...         for j in range(i + 1, len(m)):
+    ...             val = max((val, abs(m[i, j])))
+    ...     return val
+    >>> x, es = cma.fmin2(cma.ff.elli, [1, 0, 0], 0.5, {'verbose':-9}, args=[True])  # rotated
+    >>> assert maxcorr(es.sm.correlation_matrix) > 0.9, es.sm.correlation_matrix
+    >>> es = cma.CMAEvolutionStrategy([1, 0, 0], 0.5,
+    ...                               {'verbose':-9}).optimize(cma.ff.elli, args=[1])
+    >>> assert maxcorr(es.sm.correlation_matrix) > 0.9, es.sm.correlation_matrix
 
     Testing output file consistency with diagonal option:
 
-        >>> import cma
-        >>> for val in (0, True, 2, 3):
-        ...     _ = cma.fmin(cma.ff.sphere, 3 * [1], 1,
-        ...                  {'verb_disp':0, 'CMA_diagonal':val, 'maxiter':5})
-        ...     _ = cma.CMADataLogger().load()
+    >>> import cma
+    >>> for val in (0, True, 2, 3):
+    ...     _ = cma.fmin(cma.ff.sphere, 3 * [1], 1,
+    ...                  {'verb_disp':0, 'CMA_diagonal':val, 'maxiter':5})
+    ...     _ = cma.CMADataLogger().load()
 
     Test on the Rosenbrock function with 3 restarts. The first trial only
     finds the local optimum, which happens in about 20% of the cases.
@@ -238,7 +249,7 @@ def various_doctests():
         NOTE ...iteration=81...
         >>> while not es.stop():
         ...    X = es.ask()
-        ...    es.tell(X, [ftabletrot(x, cond=1e32) for x in X])  # doctest:+ELLIPSIS
+        ...    es.tell(X, [ftabletrot(x) for x in X])  # doctest:+ELLIPSIS
         >>> assert es.countiter <= 344 and 'ftarget' in es.stop(), (
         ...             "transformation bug in alleviate_condition?",
         ...             es.countiter, es.stop())
@@ -287,9 +298,19 @@ def various_doctests():
     ...     'popsize': 200,
     ...     'ftarget': 1e-8 })
     >>> es = es.optimize(cma.ff.tablet)
-    >>> assert es.result.evaluations < 5000
+    >>> if es.result.evaluations > 5000: print(es.result.evalutions, es.result)
 
     For VD- and VkD-CMA, see `cma.restricted_gaussian_sampler`.
+
+    >>> import sys
+    >>> import cma
+    >>> assert cma.interfaces.EvalParallel2 is not None
+    >>> try:
+    ...     with warnings.catch_warnings(record=True) as warn:
+    ...         with cma.optimization_tools.EvalParallel2(cma.ff.elli) as eval_all:
+    ...             res = eval_all([[1,2], [3,4]])
+    ... except:
+    ...     assert sys.version[0] == '2'
 
     """
 
